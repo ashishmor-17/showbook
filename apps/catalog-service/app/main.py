@@ -8,6 +8,8 @@ from showbook_common.errors import register_exception_handlers
 
 from app.core.config import settings
 from app.core.database import db_manager
+from app.core.redis import redis_client
+from app.core.http import http_client
 from app.api.v1 import router as api_v1_router
 
 setup_logging(service_name="catalog-service", level=settings.LOG_LEVEL)
@@ -19,6 +21,8 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("database_closing")
     await db_manager.close()
+    await redis_client.close()
+    await http_client.aclose()
 
 app = FastAPI(
     title="ShowBook Catalog Service",

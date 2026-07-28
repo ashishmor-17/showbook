@@ -74,10 +74,14 @@ services:
       - DATABASE_URL=postgresql+asyncpg://catalog_service:catalog_password@postgres:5432/showbook_catalog
       - TESTING=false
       - LOG_LEVEL=INFO
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - ./apps/catalog-service/app:/app/apps/catalog-service/app
       - ./packages/python/showbook_common:/app/packages/python/showbook_common
+      - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,4 +93,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  rabbitmq_data:
+  rabbitmq_data:

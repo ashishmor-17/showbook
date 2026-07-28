@@ -1,3 +1,4 @@
+import os
 import json
 import asyncio
 import uuid
@@ -14,21 +15,33 @@ from app.ingestion.validator import validate_normalized_movies
 
 logger = structlog.get_logger(__name__)
 
+# Resolve workspace root dynamically (4 levels up from this file)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+WORKSPACE_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", "..", ".."))
+
 class IngestionService:
     async def run_pipeline(self, db: AsyncSession, source: str, file_path: str) -> Dict[str, Any]:
         run_id = str(uuid.uuid4())
         log = logger.bind(ingestion_run_id=run_id)
         
-        log.info("ingestion_pipeline_started", source=source, file_path=file_path)
+        # Standardize and resolve path relative to workspace root if it references the data directory
+        normalized_path = file_path.replace("\\", "/")
+        if "data/" in normalized_path:
+            relative_data_path = normalized_path.split("data/")[-1]
+            resolved_path = os.path.join(WORKSPACE_ROOT, "data", relative_data_path)
+        else:
+            resolved_path = os.path.abspath(file_path)
+
+        log.info("ingestion_pipeline_started", source=source, file_path=resolved_path)
 
         def load_file():
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(resolved_path, "r", encoding="utf-8") as f:
                 return json.load(f)
 
         try:
             raw_movies = await asyncio.to_thread(load_file)
         except Exception as e:
-            log.error("failed_to_read_ingestion_file", error=str(e))
+            log.error("failed_to_read_ingestion_file", error=str(e), path=resolved_path)
             raise ValueError(f"Failed to read ingestion file: {str(e)}")
 
         await IngestionRepository.create_run(db, run_id, len(raw_movies))
