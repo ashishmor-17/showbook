@@ -1,0 +1,9 @@
+[project]
+name = "catalog-service"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "showbook-common"
+]
+[tool.uv.sources]
+showbook-common = { workspace = true }
