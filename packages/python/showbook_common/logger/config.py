@@ -26,7 +26,7 @@ def setup_logging(service_name: str, level: str = "INFO") -> None:
 
     # Configure standard library logging formatter (for Uvicorn, etc.)
     formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_processors=processors,
+        foreign_pre_chain=processors,
         processor=structlog.processors.JSONRenderer(),
     )
 

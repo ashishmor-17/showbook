@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import SecretStr, field_validator
 
@@ -10,6 +11,11 @@ class Settings(BaseSettings):
     DATABASE_URL: SecretStr
     TESTING: bool = False
     LOG_LEVEL: str = "INFO"
+
+    # Redis config
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = "6379"
+    REDIS_PASSWORD: Optional[str] = None
 
     @field_validator("DATABASE_URL", mode="after")
     @classmethod

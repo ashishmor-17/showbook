@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -34,3 +35,25 @@ class MovieIngestSchema(BaseModel):
         if v == "":
             return None
         return v
+
+class MovieResponseSchema(BaseModel):
+    id: uuid.UUID
+    title: str
+    slug: str
+    description: Optional[str] = None
+    language: str
+    genre: List[str]
+    duration_minutes: int
+    rating: str
+    release_date: Optional[date] = None
+    poster_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    trailer_url: Optional[str] = None
+    cast: List[dict]
+    crew: List[dict]
+    is_active: bool
+    class Config:
+        from_attributes = True
+class MoviePaginationResponseSchema(BaseModel):
+    items: List[MovieResponseSchema]
+    next_cursor: Optional[str] = None
