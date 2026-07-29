@@ -90,6 +90,33 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  venue-service:
+      build:
+        context: .
+        dockerfile: apps/venue-service/Dockerfile
+      container_name: showbook-venue-service
+      ports:
+        - "8001:8001"
+      environment:
+        - DATABASE_URL=postgresql+asyncpg://venue_service:venue_password@postgres:5432/showbook_venue
+        - REDIS_HOST=redis
+        - REDIS_PORT=${REDIS_PORT}
+        - REDIS_PASSWORD=${REDIS_PASSWORD}
+        - INVENTORY_SERVICE_URL=http://inventory-service:8005
+        - TESTING=false
+        - LOG_LEVEL=INFO
+      command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+      volumes:
+        - ./apps/venue-service/app:/app/apps/venue-service/app
+        - ./packages/python/showbook_common:/app/packages/python/showbook_common
+        - ./data:/app/data
+      depends_on:
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+
+
 volumes:
   postgres_data:
   redis_data:
