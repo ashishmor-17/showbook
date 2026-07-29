@@ -1,6 +1,6 @@
-from .movies import Movie
-from .events import Event
-from .ingestion_runs import IngestionRun
-from .ingestion_dead_letter import IngestionDeadLetter
+from app.models.movies import Movie
+from app.models.events import Event
+from app.models.ingestion_runs import IngestionRun
+from app.models.ingestion_dead_letter import IngestionDeadLetter
 
 __all__ = ["Movie", "Event", "IngestionRun", "IngestionDeadLetter"]

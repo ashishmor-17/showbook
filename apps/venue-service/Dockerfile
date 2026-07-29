@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install uv
+
+COPY pyproject.toml uv.lock ./
+
+COPY packages/python/pyproject.toml packages/python/
+COPY apps/venue-service/pyproject.toml apps/venue-service/
+COPY apps/catalog-service/pyproject.toml apps/catalog-service/
+COPY apps/scraper/pyproject.toml apps/scraper/
+
+RUN uv sync --frozen --package venue-service
+
+COPY . .
+
+RUN uv sync --frozen --package venue-service
+
+ENV PATH="/app/.venv/bin:$PATH"
+EXPOSE 8001
+
+WORKDIR /app/apps/venue-service
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
