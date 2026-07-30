@@ -71,7 +71,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://catalog_service:catalog_password@postgres:5432/showbook_catalog
+      - DATABASE_URL=postgresql+asyncpg://showbook:showbook@postgres:5432/showbook_catalog
       - TESTING=false
       - LOG_LEVEL=INFO
       - REDIS_HOST=${REDIS_HOST}
@@ -91,31 +91,60 @@ services:
         condition: service_healthy
 
   venue-service:
-      build:
-        context: .
-        dockerfile: apps/venue-service/Dockerfile
-      container_name: showbook-venue-service
-      ports:
-        - "8001:8001"
-      environment:
-        - DATABASE_URL=postgresql+asyncpg://venue_service:venue_password@postgres:5432/showbook_venue
-        - REDIS_HOST=redis
-        - REDIS_PORT=${REDIS_PORT}
-        - REDIS_PASSWORD=${REDIS_PASSWORD}
-        - INVENTORY_SERVICE_URL=http://inventory-service:8005
-        - TESTING=false
-        - LOG_LEVEL=INFO
-      command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
-      volumes:
-        - ./apps/venue-service/app:/app/apps/venue-service/app
-        - ./packages/python/showbook_common:/app/packages/python/showbook_common
-        - ./data:/app/data
-      depends_on:
-        postgres:
-          condition: service_healthy
-        redis:
-          condition: service_healthy
-
+    build:
+      context: .
+      dockerfile: apps/venue-service/Dockerfile
+    container_name: showbook-venue-service
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://showbook:showbook@postgres:5432/showbook_catalog
+      - REDIS_HOST=redis
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - INVENTORY_SERVICE_URL=http://inventory-service:8005
+      - TESTING=false
+      - LOG_LEVEL=INFO
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+    volumes:
+      - ./apps/venue-service/app:/app/apps/venue-service/app
+      - ./packages/python/showbook_common:/app/packages/python/showbook_common
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  user-service:
+    build:
+      context: .
+      dockerfile: apps/user-service/Dockerfile
+    container_name: showbook-user-service
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://showbook:showbook@postgres:5432/showbook_user
+      - REDIS_HOST=redis
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ALGORITHM=${JWT_ALGORITHM}
+      - ACCESS_TOKEN_EXPIRY=${ACCESS_TOKEN_EXPIRY}
+      - REFRESH_TOKEN_EXPIRY=${REFRESH_TOKEN_EXPIRY}
+      - TESTING=false
+      - LOG_LEVEL=INFO
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@showbook.com
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload"
+    volumes:
+      - ./apps/user-service/app:/app/apps/user-service/app
+      - ./packages/python/showbook_common:/app/packages/python/showbook_common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:
