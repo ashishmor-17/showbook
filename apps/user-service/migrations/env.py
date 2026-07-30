@@ -17,10 +17,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(migrations_dir, "..", "..", ".."
 from app.core.config import settings
 from showbook_common.models.base import Base
 # Import models to register metadata for Alembic autogenerate
-from app.models.movies import Movie
-from app.models.events import Event
-from app.models.ingestion_runs import IngestionRun
-from app.models.ingestion_dead_letter import IngestionDeadLetter
+from app.models.user import User
+from app.models.token import RefreshToken
 
 config = context.config
 
@@ -39,7 +37,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        version_table="alembic_version_catalog",
+        version_table="alembic_version_auth",
     )
 
     with context.begin_transaction():
@@ -50,7 +48,7 @@ def do_run_migrations(connection):
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        version_table="alembic_version_catalog",
+        version_table="alembic_version_auth",
     )
 
     with context.begin_transaction():
