@@ -146,6 +146,26 @@ services:
       redis:
         condition: service_healthy
 
+  inventory-service:
+    build:
+      context: .
+      dockerfile: apps/inventory-service/Dockerfile
+    container_name: showbook-inventory-service
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_URL=postgresql://showbook:showbook@postgres:5432/showbook_inventory
+      - REDIS_HOST=redis
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - LOG_LEVEL=INFO
+      - PORT=8003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
