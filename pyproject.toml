@@ -32,3 +32,5 @@ dependencies = [
 
 [tool.uv.workspace]
 members = ["apps/*", "packages/python/"]
+exclude = ["apps/inventory-service"]
+
