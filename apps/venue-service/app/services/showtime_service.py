@@ -88,6 +88,7 @@ class ShowtimeService:
         return SeatMapBuilder.build(
             showtime_id=showtime_id,
             screen_type=showtime.screen.screen_type,
+            status=showtime.status,
             pricing=pricing,
             seat_types=seat_types,
             physical_seats=physical_seats,

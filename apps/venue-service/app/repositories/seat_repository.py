@@ -16,6 +16,8 @@ class SeatRepository:
     @staticmethod
     async def get_screen_seat_layouts(db: AsyncSession, screen_id: uuid.UUID) -> list[SeatLayout]:
         result = await db.execute(
-            select(SeatLayout).where(SeatLayout.screen_id == screen_id, SeatLayout.is_active.is_(True))
+            select(SeatLayout)
+            .where(SeatLayout.screen_id == screen_id, SeatLayout.is_active.is_(True))
+            .order_by(SeatLayout.row_label, SeatLayout.seat_number)
         )
         return list(result.scalars().all())
