@@ -14,6 +14,8 @@ COPY pyproject.toml uv.lock ./
 COPY packages/python/pyproject.toml packages/python/
 COPY apps/catalog-service/pyproject.toml apps/catalog-service/
 COPY apps/scraper/pyproject.toml apps/scraper/
+COPY apps/user-service/pyproject.toml apps/user-service/
+COPY apps/venue-service/pyproject.toml apps/venue-service/
 
 RUN uv sync --frozen --package catalog-service
 

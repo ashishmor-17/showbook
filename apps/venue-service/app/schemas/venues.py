@@ -61,10 +61,11 @@ class RowResponse(BaseModel):
 class CategorySeatsResponse(BaseModel):
     id: uuid.UUID
     name: str
-    price: float
+    price_paise: int
     rows: list[RowResponse]
 
 class SeatMapResponse(BaseModel):
     showtime_id: uuid.UUID
     screen_type: str
+    status: str
     categories: list[CategorySeatsResponse]

@@ -166,6 +166,35 @@ services:
       redis:
         condition: service_healthy
 
+  booking-service:
+    build:
+      context: .
+      dockerfile: apps/booking-service/Dockerfile
+    container_name: showbook-booking-service
+    ports:
+      - "8006:8006"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_DEFAULT_VHOST}
+      - DATABASE_URL=postgresql://showbook:showbook@postgres:5432/showbook_booking
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
+      - VENUE_SERVICE_URL=http://venue-service:8001
+      - INVENTORY_SERVICE_URL=http://inventory-service:8003
+      - LOG_LEVEL=INFO
+      - PORT=8006
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+      venue-service:
+        condition: service_started
+
 volumes:
   postgres_data:
   redis_data:
