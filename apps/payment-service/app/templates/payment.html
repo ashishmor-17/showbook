@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ShowBook Mock Payment Gateway</title>
+    <style>
+        body {
+            font-family: 'Outfit', -apple-system, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 32px;
+            width: 380px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        h2 { color: #a5b4fc; margin-bottom: 24px; }
+        .amount { font-size: 32px; font-weight: bold; margin: 16px 0; color: #818cf8; }
+        .btn {
+            background: linear-gradient(90deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        .btn:hover { transform: scale(1.02); opacity: 0.95; }
+        .details { font-size: 14px; color: #94a3b8; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>ShowBook Gateway Mock</h2>
+        <p class="details">Transaction: {{ txn_id }}</p>
+        <p class="details">Gateway: {{ gateway }}</p>
+        <div class="amount">₹ {{ "%.2f"|format(amount) }}</div>
+        <form action="/mock-gateway/pay" method="post">
+            <input type="hidden" name="txn_id" value="{{ txn_id }}">
+            <button type="submit" class="btn">Proceed to Pay</button>
+        </form>
+    </div>
+</body>
+</html>

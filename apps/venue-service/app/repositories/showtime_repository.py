@@ -41,9 +41,10 @@ class ShowtimeRepository:
         result = await db.execute(
             select(Showtime)
             .where(Showtime.id == showtime_id)
-            .options(joinedload(Showtime.screen))
+            .options(joinedload(Showtime.screen), joinedload(Showtime.venue))
         )
         return result.scalar_one_or_none()
+
 
     @staticmethod
     async def get_showtime_pricing(db: AsyncSession, showtime_id: uuid.UUID) -> list[ShowtimeSeatPricing]:

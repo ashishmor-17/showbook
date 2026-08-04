@@ -181,6 +181,7 @@ services:
       - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
       - VENUE_SERVICE_URL=http://venue-service:8001
       - INVENTORY_SERVICE_URL=http://inventory-service:8003
+      - CATALOG_SERVICE_URL=http://catalog-service:8000
       - LOG_LEVEL=INFO
       - PORT=8006
     depends_on:
@@ -194,6 +195,31 @@ services:
         condition: service_started
       venue-service:
         condition: service_started
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: apps/payment-service/Dockerfile
+    container_name: showbook-payment-service
+    ports:
+      - "8007:8007"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://showbook:showbook@postgres:5432/showbook_booking
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
+      - PAYMENT_SERVICE_URL=http://localhost:8007
+      - GATEWAY_SECRET=payment_gateway_secret_key
+      - TESTING=false
+      - LOG_LEVEL=INFO
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8007 --reload"
+    volumes:
+      - ./apps/payment-service/app:/app/apps/payment-service/app
+      - ./apps/payment-service/migrations:/app/apps/payment-service/migrations
+      - ./packages/python/showbook_common:/app/packages/python/showbook_common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
 volumes:
   postgres_data:

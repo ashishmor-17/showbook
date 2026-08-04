@@ -10,6 +10,7 @@ import (
 
 	"github.com/ashishmor-17/showbook/apps/booking-service/db/migrations"
 	"github.com/ashishmor-17/showbook/apps/booking-service/internal/handlers"
+	bookingQueue "github.com/ashishmor-17/showbook/apps/booking-service/internal/queue"
 	"github.com/ashishmor-17/showbook/apps/booking-service/internal/repository"
 	"github.com/ashishmor-17/showbook/apps/booking-service/internal/server"
 	"github.com/ashishmor-17/showbook/apps/booking-service/internal/service"
@@ -58,11 +59,12 @@ func main() {
 
 	venueServiceURL := config.GetEnv("VENUE_SERVICE_URL", "http://localhost:8001")
 	inventoryServiceURL := config.GetEnv("INVENTORY_SERVICE_URL", "http://localhost:8003")
+	catalogServiceURL := config.GetEnv("CATALOG_SERVICE_URL", "http://localhost:8000")
 
 	httpClient := clients.NewHTTPClient(5 * time.Second)
 	bookingRepo := repository.NewBookingRepository(pgPool)
 	timeProvider := utils.RealTimeProvider{}
-	bookingSvc := service.NewBookingService(bookingRepo, httpClient, venueServiceURL, inventoryServiceURL, timeProvider, log)
+	bookingSvc := service.NewBookingService(bookingRepo, httpClient, venueServiceURL, inventoryServiceURL, catalogServiceURL, timeProvider, log)
 	bookingHandler := handlers.NewBookingHandler(bookingSvc, log)
 
 	srv := server.New(log, pgPool, bookingHandler)
@@ -74,6 +76,9 @@ func main() {
 	// Expiry worker
 	expiryWorker := worker.NewExpiryWorker(bookingRepo, log)
 	go expiryWorker.Start(appCtx)
+
+	paymentConsumer := bookingQueue.NewPaymentConsumer(bookingSvc, rabbitmqConn, log)
+	go paymentConsumer.Start(appCtx)
 
 	port := config.GetEnv("PORT", "8006")
 	srv.Start(port)

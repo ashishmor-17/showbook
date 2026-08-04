@@ -94,3 +94,21 @@ class ShowtimeService:
             physical_seats=physical_seats,
             live_statuses=live_statuses
         )
+
+    @classmethod
+    async def get_showtime_details(cls, db: AsyncSession, showtime_id: uuid.UUID) -> dict:
+        import datetime
+        showtime = await ShowtimeRepository.get_showtime_with_details(db, showtime_id)
+        if not showtime:
+            raise ShowtimeNotFoundException(f"Showtime '{showtime_id}' not found")
+            
+        start_dt = datetime.datetime.combine(showtime.show_date, showtime.start_time)
+        return {
+            "id": showtime.id,
+            "show_date": showtime.show_date.isoformat(),
+            "start_time": showtime.start_time.strftime("%H:%M:%S"),
+            "start_datetime": start_dt.isoformat(),
+            "status": showtime.status,
+            "venue_name": showtime.venue.name,
+            "movie_id": showtime.catalog_ref_id
+    }

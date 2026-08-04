@@ -20,5 +20,6 @@ func (s *Server) setupRoutes(
 		api.POST("/bookings/initiate", bookingHandler.Initiate)
 		api.GET("/bookings/:booking_ref", bookingHandler.Get)
 		api.GET("/bookings", bookingHandler.List)
+		api.POST("/bookings/:booking_id/cancel", bookingHandler.Cancel)
 	}
 }
