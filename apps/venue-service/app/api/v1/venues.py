@@ -1,4 +1,5 @@
 import uuid
+import datetime
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -9,6 +10,11 @@ from app.services.city_service import CityService
 from app.services.venue_service import VenueService
 from app.services.showtime_service import ShowtimeService
 from app.schemas.venues import CityListResponse, VenueListResponse, ShowtimeQueryResponse, SeatMapResponse
+from app.repositories.showtime_repository import ShowtimeRepository
+from app.core.exceptions import ShowtimeNotFoundException
+from sqlalchemy.orm import joinedload
+from sqlalchemy import select
+from app.models.showtime import Showtime
 
 router = APIRouter()
 
@@ -39,3 +45,7 @@ async def get_showtimes(
 @router.get("/showtimes/{showtime_id}/seats", response_model=SeatMapResponse)
 async def get_seat_map(showtime_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return await ShowtimeService.get_seat_map(db, showtime_id)
+
+@router.get("/showtimes/{showtime_id}")
+async def get_showtime(showtime_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    return await ShowtimeService.get_showtime_details(db, showtime_id)

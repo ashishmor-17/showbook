@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/ashishmor-17/showbook/apps/booking-service/internal/repository"
@@ -24,14 +25,14 @@ import (
 )
 
 var (
-	ErrSeatAlreadyLocked  = errors.New("seats locks could not be acquired (already held)")
-	ErrShowClosed         = errors.New("showtime is not open")
-	ErrVenueUnavailable   = errors.New("venue service is unavailable")
-	ErrInventoryTimeout   = errors.New("inventory service request timed out")
-	ErrBookingNotFound    = errors.New("booking not found")
-	ErrShowtimeNotFound   = errors.New("showtime not found")
-	ErrForbiddenAccess    = errors.New("access denied")
-	ErrIdempotencyConflict= errors.New("cannot replay request: hash mismatch or expired booking")
+	ErrSeatAlreadyLocked   = errors.New("seats locks could not be acquired (already held)")
+	ErrShowClosed          = errors.New("showtime is not open")
+	ErrVenueUnavailable    = errors.New("venue service is unavailable")
+	ErrInventoryTimeout    = errors.New("inventory service request timed out")
+	ErrBookingNotFound     = errors.New("booking not found")
+	ErrShowtimeNotFound    = errors.New("showtime not found")
+	ErrForbiddenAccess     = errors.New("access denied")
+	ErrIdempotencyConflict = errors.New("cannot replay request: hash mismatch or expired booking")
 )
 
 const DefaultConvenienceFeePaise = 2000
@@ -65,6 +66,7 @@ type BookingService struct {
 	httpClient          *clients.HTTPClient
 	venueServiceURL     string
 	inventoryServiceURL string
+	catalogServiceURL   string
 	timeProvider        utils.TimeProvider
 	log                 *zap.Logger
 }
@@ -74,6 +76,7 @@ func NewBookingService(
 	httpClient *clients.HTTPClient,
 	venueServiceURL string,
 	inventoryServiceURL string,
+	catalogServiceURL string,
 	timeProvider utils.TimeProvider,
 	log *zap.Logger,
 ) *BookingService {
@@ -82,6 +85,7 @@ func NewBookingService(
 		httpClient:          httpClient,
 		venueServiceURL:     venueServiceURL,
 		inventoryServiceURL: inventoryServiceURL,
+		catalogServiceURL:   catalogServiceURL,
 		timeProvider:        timeProvider,
 		log:                 log,
 	}
@@ -406,7 +410,7 @@ func (s *BookingService) InitiateBooking(
 				dbSuccess = true
 				break
 			}
-			
+
 			if constraintName, isUnique := repository.GetUniqueViolationConstraint(err); isUnique {
 				// Handle idempotency unique key collision (idx_bookings_idempotency)
 				if constraintName == "idx_bookings_idempotency" {
@@ -420,7 +424,7 @@ func (s *BookingService) InitiateBooking(
 					}
 					break
 				}
-				
+
 				// Handle booking ref unique key collision (bookings_booking_ref_key)
 				if constraintName == "bookings_booking_ref_key" || strings.Contains(constraintName, "booking_ref") {
 					logger.Warn("Booking ref collision occurred, retrying reference generation", zap.String("booking_ref", finalBookingRef))
@@ -482,7 +486,7 @@ func (s *BookingService) publishBookingFailedEvent(ctx context.Context, id uuid.
 			"reason":      "database persistence transaction failure",
 		},
 	}
-	dbCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := s.repo.InsertOutboxEventOnly(dbCtx, event); err != nil {
 		s.log.Error("Failed saving outbox event for booking failure", zap.Error(err))
@@ -499,4 +503,285 @@ func (s *BookingService) ListBookings(ctx context.Context, userID string, cursor
 		return nil, err
 	}
 	return s.repo.ListBookingsCursor(ctx, userUUID, cursor, cursorID, limit)
+}
+
+func (s *BookingService) GetBookingByID(ctx context.Context, id uuid.UUID) (*repository.Booking, []repository.BookingSeat, error) {
+	return s.repo.GetBookingByID(ctx, id)
+}
+
+func (s *BookingService) ConfirmBooking(
+	ctx context.Context,
+	bookingRef string,
+	paymentID uuid.UUID,
+	gateway string,
+	gatewayTxnID string,
+) error {
+	s.log.Info("Confirming booking", zap.String("booking_ref", bookingRef), zap.String("payment_id", paymentID.String()))
+
+	// Fetch booking with seats
+	booking, seats, err := s.repo.GetBookingByRef(ctx, bookingRef)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrBookingNotFound
+		}
+		return err
+	}
+
+	// Idempotency check
+	if booking.Status == utils.StatusConfirmed {
+		s.log.Info("Booking already confirmed", zap.String("booking_ref", bookingRef))
+		return nil
+	}
+
+	// Call inventory service to confirm seats
+	inventoryURL := fmt.Sprintf("%s/api/v1/inventory/confirm", s.inventoryServiceURL)
+	seatCodes := make([]string, len(seats))
+	for i, seat := range seats {
+		seatCodes[i] = seat.SeatCode
+	}
+
+	confirmPayload := map[string]any{
+		"showtime_id": booking.ShowtimeID.String(),
+		"booking_id":  booking.ID.String(),
+		"seat_codes":  seatCodes,
+	}
+
+	bodyBytes, err := json.Marshal(confirmPayload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", inventoryURL, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed calling inventory-service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed inventory confirmation (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Fetch Showtime Details (venue_name, movie_id, show_date, start_time)
+	venueURL := fmt.Sprintf("%s/api/v1/venues/showtimes/%s", s.venueServiceURL, booking.ShowtimeID.String())
+	venueReq, err := http.NewRequestWithContext(ctx, "GET", venueURL, nil)
+	if err != nil {
+		return err
+	}
+	venueResp, err := s.httpClient.Do(ctx, venueReq)
+	if err != nil {
+		return fmt.Errorf("failed calling venue-service: %w", err)
+	}
+	defer venueResp.Body.Close()
+
+	if venueResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed fetching showtime details from venue-service (status %d)", venueResp.StatusCode)
+	}
+
+	var showtimeDetails struct {
+		VenueName string `json:"venue_name"`
+		MovieID   string `json:"movie_id"`
+		ShowDate  string `json:"show_date"`
+		StartTime string `json:"start_time"`
+	}
+	if err := json.NewDecoder(venueResp.Body).Decode(&showtimeDetails); err != nil {
+		return err
+	}
+
+	// Fetch Movie Details (movie_title)
+	catalogURL := fmt.Sprintf("%s/api/v1/catalog/movies/id/%s", s.catalogServiceURL, showtimeDetails.MovieID)
+	catalogReq, err := http.NewRequestWithContext(ctx, "GET", catalogURL, nil)
+	if err != nil {
+		return err
+	}
+	catalogResp, err := s.httpClient.Do(ctx, catalogReq)
+	if err != nil {
+		return fmt.Errorf("failed calling catalog-service: %w", err)
+	}
+	defer catalogResp.Body.Close()
+
+	if catalogResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed fetching movie details from catalog-service (status %d)", catalogResp.StatusCode)
+	}
+
+	var movieDetails struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(catalogResp.Body).Decode(&movieDetails); err != nil {
+		return err
+	}
+
+	// Generate unique barcode and Ticket records
+	var tickets []repository.Ticket
+	var eventTickets []map[string]any
+	for _, seat := range seats {
+		barcode := fmt.Sprintf("TKT-%s-%s", booking.BookingRef, seat.SeatCode)
+		tickets = append(tickets, repository.Ticket{
+			ID:        uuid.New(),
+			BookingID: booking.ID,
+			SeatCode:  seat.SeatCode,
+			Barcode:   barcode,
+			Status:    "VALID",
+		})
+		eventTickets = append(eventTickets, map[string]any{
+			"seat_code": seat.SeatCode,
+			"barcode":   barcode,
+		})
+	}
+
+	// Build the booking.confirmed outbox event
+	event := &repository.OutboxEvent{
+		ID:            uuid.New(),
+		EventID:       uuid.New(),
+		EventType:     utils.EventBookingConfirmed,
+		EventVersion:  1,
+		AggregateType: "booking",
+		AggregateID:   booking.ID,
+		Payload: map[string]any{
+			"booking_ref":  booking.BookingRef,
+			"user_id":      booking.UserID.String(),
+			"showtime_id":  booking.ShowtimeID.String(),
+			"movie_title":  movieDetails.Title,
+			"venue_name":   showtimeDetails.VenueName,
+			"show_date":    showtimeDetails.ShowDate,
+			"start_time":   showtimeDetails.StartTime,
+			"seat_codes":   seatCodes,
+			"total_amount": float64(booking.FinalAmountPaise) / 100.0,
+			"tickets":      eventTickets,
+		},
+	}
+
+	// Commit changes to Database
+	err = s.repo.ConfirmBookingWithOutbox(ctx, booking.ID, paymentID, gateway, gatewayTxnID, tickets, event)
+	if err != nil {
+		return fmt.Errorf("db transaction for confirm booking failed: %w", err)
+	}
+
+	s.log.Info("Booking confirmed successfully", zap.String("booking_ref", bookingRef))
+	return nil
+}
+
+func (s *BookingService) CancelBooking(
+	ctx context.Context,
+	bookingID uuid.UUID,
+	reason string,
+	isUserCancelled bool,
+) error {
+	s.log.Info("Cancelling booking", zap.String("booking_id", bookingID.String()), zap.String("reason", reason))
+
+	// Fetch booking with seats
+	booking, seats, err := s.repo.GetBookingByID(ctx, bookingID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrBookingNotFound
+		}
+		return err
+	}
+
+	// Idempotency check
+	if booking.Status == utils.StatusCancelled {
+		s.log.Info("Booking already cancelled", zap.String("booking_id", bookingID.String()))
+		return nil
+	}
+
+	// If user initiated cancellation, check if show starts in < 2 hours
+	if isUserCancelled {
+		venueURL := fmt.Sprintf("%s/api/v1/venues/showtimes/%s", s.venueServiceURL, booking.ShowtimeID.String())
+		venueReq, err := http.NewRequestWithContext(ctx, "GET", venueURL, nil)
+		if err != nil {
+			return err
+		}
+		venueResp, err := s.httpClient.Do(ctx, venueReq)
+		if err != nil {
+			return fmt.Errorf("failed calling venue-service: %w", err)
+		}
+		defer venueResp.Body.Close()
+
+		if venueResp.StatusCode != http.StatusOK {
+			return fmt.Errorf("failed fetching showtime details from venue-service (status %d)", venueResp.StatusCode)
+		}
+
+		var showtimeDetails struct {
+			StartDatetime string `json:"start_datetime"`
+		}
+		if err := json.NewDecoder(venueResp.Body).Decode(&showtimeDetails); err != nil {
+			return err
+		}
+
+		startDT, err := time.Parse(time.RFC3339, showtimeDetails.StartDatetime)
+		if err != nil {
+			startDT, err = time.Parse("2006-01-02T15:04:05", showtimeDetails.StartDatetime)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to parse start datetime: %w", err)
+		}
+
+		if startDT.Sub(s.timeProvider.Now()) < 2*time.Hour {
+			return errors.New("cannot cancel booking less than 2 hours before showtime")
+		}
+	}
+
+	// Build booking.cancelled outbox event
+	seatCodes := make([]string, len(seats))
+	for i, seat := range seats {
+		seatCodes[i] = seat.SeatCode
+	}
+
+	refundEligible := false
+	if booking.Status == utils.StatusConfirmed {
+		refundEligible = true
+	}
+
+	cancelEvent := &repository.OutboxEvent{
+		ID:            uuid.New(),
+		EventID:       uuid.New(),
+		EventType:     utils.EventBookingCancelled,
+		EventVersion:  1,
+		AggregateType: "booking",
+		AggregateID:   booking.ID,
+		Payload: map[string]any{
+			"booking_ref":         booking.BookingRef,
+			"user_id":             booking.UserID.String(),
+			"showtime_id":         booking.ShowtimeID.String(),
+			"seat_codes":          seatCodes,
+			"cancellation_reason": reason,
+			"refund_eligible":     refundEligible,
+			"refund_amount":       float64(booking.FinalAmountPaise) / 100.0,
+		},
+	}
+
+	// Build inventory.release.requested outbox event
+	lockTokenVal := ""
+	if booking.LockToken != nil {
+		lockTokenVal = *booking.LockToken
+	}
+	releaseEvent := &repository.OutboxEvent{
+		ID:            uuid.New(),
+		EventID:       uuid.New(),
+		EventType:     utils.EventInventoryReleaseRequested,
+		EventVersion:  1,
+		AggregateType: "booking",
+		AggregateID:   booking.ID,
+		Payload: map[string]any{
+			"showtime_id": booking.ShowtimeID.String(),
+			"booking_id":  booking.ID.String(),
+			"lock_token":  lockTokenVal,
+			"seat_codes":  seatCodes,
+		},
+	}
+
+	// Update DB inside a transaction
+	err = s.repo.CancelBookingWithOutbox(ctx, booking.ID, cancelEvent, releaseEvent)
+	if err != nil {
+		return fmt.Errorf("db transaction for cancel booking failed: %w", err)
+	}
+
+	s.log.Info("Booking cancelled successfully", zap.String("booking_id", bookingID.String()))
+	return nil
 }

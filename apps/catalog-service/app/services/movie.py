@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from typing import List, Optional
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,3 +86,10 @@ class MovieService:
     @staticmethod
     async def search_movies(db: AsyncSession, query_str: str) -> List[Movie]:
         return await MovieRepository.search_movies(db, query_str)
+
+    @staticmethod
+    async def get_movie_by_id(db: AsyncSession, movie_id: uuid.UUID) -> dict:
+        movie = await MovieRepository.get_by_id(db, movie_id)
+        if not movie:
+            raise MovieNotFoundException(str(movie_id))
+        return MovieResponseSchema.model_validate(movie).model_dump(mode="json")

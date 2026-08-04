@@ -92,4 +92,9 @@ class MovieRepository:
         ).limit(10)
         result = await db.execute(query)
         return list(result.scalars().all())
-                
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, movie_id: uuid.UUID) -> Optional[Movie]:
+        query = select(Movie).where(Movie.id == movie_id, Movie.is_active == True)
+        result = await db.execute(query)
+        return result.scalar_one_or_none()

@@ -16,6 +16,7 @@ COPY apps/catalog-service/pyproject.toml apps/catalog-service/
 COPY apps/scraper/pyproject.toml apps/scraper/
 COPY apps/user-service/pyproject.toml apps/user-service/
 COPY apps/venue-service/pyproject.toml apps/venue-service/
+COPY apps/payment-service/pyproject.toml apps/payment-service/
 
 RUN uv sync --frozen --package venue-service
 

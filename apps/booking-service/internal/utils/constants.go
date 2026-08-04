@@ -20,4 +20,6 @@ const (
 	EventBookingFailed            = "booking.failed"
 	EventBookingExpired           = "booking.expired"
 	EventInventoryReleaseRequested = "inventory.release.requested"
+	EventBookingConfirmed         = "booking.confirmed"
+	EventBookingCancelled         = "booking.cancelled"
 )

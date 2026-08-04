@@ -180,3 +180,47 @@ func (h *BookingHandler) List(c *gin.Context) {
 		"next_cursor_id": nextCursorID,
 	})
 }
+
+func (h *BookingHandler) Cancel(c *gin.Context) {
+	bookingIDStr := c.Param("booking_id")
+	bookingID, err := uuid.Parse(bookingIDStr)
+	if err != nil {
+		c.Error(ginErrors.BadRequest("INVALID_BOOKING_ID", "Invalid booking ID format"))
+		return
+	}
+
+	userID := c.GetHeader("X-User-Id")
+	if userID == "" {
+		userID = c.Query("user_id")
+		if userID == "" {
+			c.Error(ginErrors.Unauthorized("MISSING_USER_ID", "User header required"))
+			return
+		}
+	}
+
+	// Fetch booking to check authorization
+	booking, _, err := h.svc.GetBookingByID(c.Request.Context(), bookingID)
+	if err != nil {
+		c.Error(ginErrors.NotFound("BOOKING_NOT_FOUND", "Booking not found"))
+		return
+	}
+
+	if booking.UserID.String() != userID {
+		c.Error(ginErrors.New(http.StatusForbidden, "ACCESS_DENIED", "You are not authorized to cancel this booking"))
+		return
+	}
+
+	// Perform cancellation
+	err = h.svc.CancelBooking(c.Request.Context(), bookingID, "USER_REQUESTED", true)
+	if err != nil {
+		h.log.Error("Booking cancellation failed", zap.String("booking_id", bookingIDStr), zap.Error(err))
+		if err.Error() == "cannot cancel booking less than 2 hours before showtime" {
+			c.Error(ginErrors.Conflict("CANCEL_FORBIDDEN", err.Error()))
+			return
+		}
+		c.Error(ginErrors.BadRequest("CANCEL_FAILED", err.Error()))
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Booking cancelled successfully"})
+}

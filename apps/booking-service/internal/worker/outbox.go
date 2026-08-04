@@ -47,7 +47,7 @@ func (w *OutboxWorker) Start(ctx context.Context) {
 	}
 
 	err := w.amqpCh.ExchangeDeclare(
-		"booking_events", "topic", true, false, false, false, nil,
+		"showbook.events", "topic", true, false, false, false, nil,
 	)
 	if err != nil {
 		w.log.Fatal("Failed to declare RabbitMQ exchange", zap.Error(err))
@@ -97,7 +97,7 @@ func (w *OutboxWorker) processPendingEvents(ctx context.Context, confirms <-chan
 
 		err = w.amqpCh.PublishWithContext(
 			ctx,
-			"booking_events",
+			"showbook.events",
 			e.EventType,
 			false,
 			false,

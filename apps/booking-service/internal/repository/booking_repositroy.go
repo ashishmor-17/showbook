@@ -47,6 +47,15 @@ type BookingSeat struct {
 	ConvenienceFeePaise int64
 }
 
+type Ticket struct {
+	ID        uuid.UUID
+	BookingID uuid.UUID
+	SeatCode  string
+	Barcode   string
+	Status    string
+	IssuedAt  time.Time
+}
+
 type OutboxEvent struct {
 	ID            uuid.UUID
 	EventID       uuid.UUID
@@ -67,7 +76,7 @@ func NewBookingRepository(db *pgxpool.Pool) *BookingRepository {
 	return &BookingRepository{db: db}
 }
 
-// Concern #1: Check and return postgres constraint name for unique key violations
+// Check and return postgres constraint name for unique key violations
 func GetUniqueViolationConstraint(err error) (string, bool) {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -116,7 +125,7 @@ func (r *BookingRepository) GetBookingByRef(ctx context.Context, ref string) (*B
 	return &b, seats, nil
 }
 
-// Concern #2: Fully populate all columns, including payment info, on idempotency checks
+// Fully populate all columns, including payment info, on idempotency checks
 func (r *BookingRepository) CheckIdempotency(ctx context.Context, key string) (*Booking, error) {
 	var b Booking
 	err := r.db.QueryRow(ctx, `
@@ -271,6 +280,156 @@ func (r *BookingRepository) UpdateOutboxStatus(ctx context.Context, event *Outbo
 	return err
 }
 
+func (r *BookingRepository) GetBookingByID(ctx context.Context, id uuid.UUID) (*Booking, []BookingSeat, error) {
+	var b Booking
+	err := r.db.QueryRow(ctx, `
+		SELECT id, booking_ref, user_id, showtime_id, status, total_amount_paise, convenience_fee_paise, 
+		       discount_amount_paise, final_amount_paise, currency, expires_at, idempotency_key, request_hash, lock_token,
+		       payment_id, payment_provider, payment_provider_order_id, payment_provider_payment_id, created_at, updated_at
+		FROM bookings WHERE id = $1`, id).Scan(
+		&b.ID, &b.BookingRef, &b.UserID, &b.ShowtimeID, &b.Status, &b.TotalAmountPaise, &b.ConvenienceFeePaise,
+		&b.DiscountAmountPaise, &b.FinalAmountPaise, &b.Currency, &b.ExpiresAt, &b.IdempotencyKey, &b.RequestHash, &b.LockToken,
+		&b.PaymentID, &b.PaymentProvider, &b.PaymentProviderOrderID, &b.PaymentProviderPaymentID, &b.CreatedAt, &b.UpdatedAt,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, booking_id, seat_code, seat_type_name, unit_price_paise, convenience_fee_paise
+		FROM booking_seats WHERE booking_id = $1`, b.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var seats []BookingSeat
+	for rows.Next() {
+		var s BookingSeat
+		if err := rows.Scan(&s.ID, &s.BookingID, &s.SeatCode, &s.SeatTypeName, &s.UnitPricePaise, &s.ConvenienceFeePaise); err != nil {
+			return nil, nil, err
+		}
+		seats = append(seats, s)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return &b, seats, nil
+}
+
+func (r *BookingRepository) ConfirmBookingWithOutbox(
+	ctx context.Context,
+	bookingID uuid.UUID,
+	paymentID uuid.UUID,
+	gateway string,
+	gatewayTxnID string,
+	tickets []Ticket,
+	event *OutboxEvent,
+) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	res, err := tx.Exec(ctx, `
+		UPDATE bookings 
+		SET status = $1, payment_id = $2, payment_provider = $3, payment_provider_payment_id = $4, updated_at = NOW() 
+		WHERE id = $5 AND status = $6`,
+		utils.StatusConfirmed, paymentID, gateway, gatewayTxnID, bookingID, utils.StatusInitiated,
+	)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("booking is not in INITIATED status or already updated")
+	}
+
+	for _, t := range tickets {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO tickets (id, booking_id, seat_code, barcode, status, issued_at)
+			VALUES ($1, $2, $3, $4, $5, NOW())`,
+			t.ID, t.BookingID, t.SeatCode, t.Barcode, t.Status,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO outbox (id, event_id, event_type, event_version, aggregate_type, aggregate_id, payload, status)
+		VALUES ($1, $2, $3, 1, 'booking', $4, $5, $6)`,
+		event.ID, event.EventID, event.EventType, bookingID, payloadJSON, utils.OutboxStatusPending,
+	)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *BookingRepository) CancelBookingWithOutbox(
+	ctx context.Context,
+	bookingID uuid.UUID,
+	cancelEvent *OutboxEvent,
+	releaseEvent *OutboxEvent,
+) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	res, err := tx.Exec(ctx, `
+		UPDATE bookings 
+		SET status = $1, updated_at = NOW() 
+		WHERE id = $2 AND status IN ($3, $4)`,
+		utils.StatusCancelled, bookingID, utils.StatusInitiated, utils.StatusConfirmed,
+	)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("booking status could not be transitioned to CANCELLED")
+	}
+
+	cancelPayloadJSON, err := json.Marshal(cancelEvent.Payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO outbox (id, event_id, event_type, event_version, aggregate_type, aggregate_id, payload, status)
+		VALUES ($1, $2, $3, 1, 'booking', $4, $5, $6)`,
+		cancelEvent.ID, cancelEvent.EventID, cancelEvent.EventType, bookingID, cancelPayloadJSON, utils.OutboxStatusPending,
+	)
+	if err != nil {
+		return err
+	}
+
+	if releaseEvent != nil {
+		releasePayloadJSON, err := json.Marshal(releaseEvent.Payload)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO outbox (id, event_id, event_type, event_version, aggregate_type, aggregate_id, payload, status)
+			VALUES ($1, $2, $3, 1, 'booking', $4, $5, $6)`,
+			releaseEvent.ID, releaseEvent.EventID, releaseEvent.EventType, bookingID, releasePayloadJSON, utils.OutboxStatusPending,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (r *BookingRepository) ExpireBookingsBulk(ctx context.Context, limit int) ([]Booking, [][]string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -317,7 +476,7 @@ func (r *BookingRepository) ExpireBookingsBulk(ctx context.Context, limit int) (
 			return nil, nil, err
 		}
 		expired = append(expired, b)
-		
+
 		var seatCodes []string
 		if seatsJoined != "" {
 			seatCodes = strings.Split(seatsJoined, ",")
@@ -335,7 +494,7 @@ func (r *BookingRepository) ExpireBookingsBulk(ctx context.Context, limit int) (
 
 	for i, b := range expired {
 		seatCodes := expiredSeats[i]
-		
+
 		expiredPayload := map[string]any{
 			"booking_id":  b.ID.String(),
 			"booking_ref": b.BookingRef,

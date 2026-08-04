@@ -1,4 +1,5 @@
 import httpx
+import uuid
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,3 +54,10 @@ async def get_movie_detail(
     redis: Redis = Depends(get_redis)
 ):
     return await MovieService.get_movie_detail(db, redis, slug)
+
+@router.get("/id/{movie_id}", response_model=MovieResponseSchema)
+async def get_movie_by_id(
+    movie_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    return await MovieService.get_movie_by_id(db, movie_id)
