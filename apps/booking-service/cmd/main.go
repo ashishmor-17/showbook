@@ -60,11 +60,12 @@ func main() {
 	venueServiceURL := config.GetEnv("VENUE_SERVICE_URL", "http://localhost:8001")
 	inventoryServiceURL := config.GetEnv("INVENTORY_SERVICE_URL", "http://localhost:8003")
 	catalogServiceURL := config.GetEnv("CATALOG_SERVICE_URL", "http://localhost:8000")
+	userServiceURL := config.GetEnv("USER_SERVICE_URL", "http://localhost:8002")
 
 	httpClient := clients.NewHTTPClient(5 * time.Second)
 	bookingRepo := repository.NewBookingRepository(pgPool)
 	timeProvider := utils.RealTimeProvider{}
-	bookingSvc := service.NewBookingService(bookingRepo, httpClient, venueServiceURL, inventoryServiceURL, catalogServiceURL, timeProvider, log)
+	bookingSvc := service.NewBookingService(bookingRepo, httpClient, venueServiceURL, inventoryServiceURL, catalogServiceURL, userServiceURL, timeProvider, log)
 	bookingHandler := handlers.NewBookingHandler(bookingSvc, log)
 
 	srv := server.New(log, pgPool, bookingHandler)

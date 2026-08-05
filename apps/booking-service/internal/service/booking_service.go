@@ -67,6 +67,7 @@ type BookingService struct {
 	venueServiceURL     string
 	inventoryServiceURL string
 	catalogServiceURL   string
+	userServiceURL      string
 	timeProvider        utils.TimeProvider
 	log                 *zap.Logger
 }
@@ -77,6 +78,7 @@ func NewBookingService(
 	venueServiceURL string,
 	inventoryServiceURL string,
 	catalogServiceURL string,
+	userServiceURL string,
 	timeProvider utils.TimeProvider,
 	log *zap.Logger,
 ) *BookingService {
@@ -86,9 +88,42 @@ func NewBookingService(
 		venueServiceURL:     venueServiceURL,
 		inventoryServiceURL: inventoryServiceURL,
 		catalogServiceURL:   catalogServiceURL,
+		userServiceURL:      userServiceURL,
 		timeProvider:        timeProvider,
 		log:                 log,
 	}
+}
+
+type UserProfile struct {
+	UserID uuid.UUID `json:"user_id"`
+	Email  string    `json:"email"`
+	Name   string    `json:"name"`
+	Phone  string    `json:"phone"`
+}
+
+func (s *BookingService) fetchUserProfile(ctx context.Context, userID string) (*UserProfile, error) {
+	url := fmt.Sprintf("%s/api/internal/users/%s", s.userServiceURL, userID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Internal-Service", "true")
+
+	resp, err := s.httpClient.Do(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed calling user-service: %w", err)
+	}
+	defer drainAndClose(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed fetching user details (status %d)", resp.StatusCode)
+	}
+
+	var profile UserProfile
+	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+		return nil, err
+	}
+	return &profile, nil
 }
 
 func drainAndClose(body io.ReadCloser) {
@@ -366,6 +401,16 @@ func (s *BookingService) InitiateBooking(
 		LockToken:           &lockToken,
 	}
 
+	var userEmail, userName, userPhone string
+	if profile, profileErr := s.fetchUserProfile(ctx, userID); profileErr == nil {
+		userEmail = profile.Email
+		userName = profile.Name
+		userPhone = profile.Phone
+	} else {
+		s.log.Error("Failed to fetch user profile for booking initiation", zap.String("user_id", userID), zap.Error(profileErr))
+		userName = "Customer"
+	}
+
 	event := &repository.OutboxEvent{
 		ID:            uuid.New(),
 		EventID:       uuid.New(),
@@ -377,6 +422,9 @@ func (s *BookingService) InitiateBooking(
 			"booking_id":   bookingID.String(),
 			"booking_ref":  "",
 			"user_id":      userID,
+			"user_email":   userEmail,
+			"user_name":    userName,
+			"user_phone":   userPhone,
 			"showtime_id":  showtimeID,
 			"seat_codes":   seatCodes,
 			"total_amount": b.FinalAmountPaise,
@@ -636,6 +684,16 @@ func (s *BookingService) ConfirmBooking(
 	}
 
 	// Build the booking.confirmed outbox event
+	var userEmail, userName, userPhone string
+	if profile, profileErr := s.fetchUserProfile(ctx, booking.UserID.String()); profileErr == nil {
+		userEmail = profile.Email
+		userName = profile.Name
+		userPhone = profile.Phone
+	} else {
+		s.log.Error("Failed to fetch user profile for booking confirmation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
+		userName = "Customer"
+	}
+
 	event := &repository.OutboxEvent{
 		ID:            uuid.New(),
 		EventID:       uuid.New(),
@@ -646,6 +704,9 @@ func (s *BookingService) ConfirmBooking(
 		Payload: map[string]any{
 			"booking_ref":  booking.BookingRef,
 			"user_id":      booking.UserID.String(),
+			"user_email":   userEmail,
+			"user_name":    userName,
+			"user_phone":   userPhone,
 			"showtime_id":  booking.ShowtimeID.String(),
 			"movie_title":  movieDetails.Title,
 			"venue_name":   showtimeDetails.VenueName,
@@ -738,6 +799,16 @@ func (s *BookingService) CancelBooking(
 		refundEligible = true
 	}
 
+	var userEmail, userName, userPhone string
+	if profile, profileErr := s.fetchUserProfile(ctx, booking.UserID.String()); profileErr == nil {
+		userEmail = profile.Email
+		userName = profile.Name
+		userPhone = profile.Phone
+	} else {
+		s.log.Error("Failed to fetch user profile for booking cancellation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
+		userName = "Customer"
+	}
+
 	cancelEvent := &repository.OutboxEvent{
 		ID:            uuid.New(),
 		EventID:       uuid.New(),
@@ -748,6 +819,9 @@ func (s *BookingService) CancelBooking(
 		Payload: map[string]any{
 			"booking_ref":         booking.BookingRef,
 			"user_id":             booking.UserID.String(),
+			"user_email":          userEmail,
+			"user_name":           userName,
+			"user_phone":          userPhone,
 			"showtime_id":         booking.ShowtimeID.String(),
 			"seat_codes":          seatCodes,
 			"cancellation_reason": reason,
