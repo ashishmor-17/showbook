@@ -182,6 +182,7 @@ services:
       - VENUE_SERVICE_URL=http://venue-service:8001
       - INVENTORY_SERVICE_URL=http://inventory-service:8003
       - CATALOG_SERVICE_URL=http://catalog-service:8000
+      - USER_SERVICE_URL=http://user-service:8002
       - LOG_LEVEL=INFO
       - PORT=8006
     depends_on:
@@ -208,6 +209,7 @@ services:
       - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
       - PAYMENT_SERVICE_URL=http://localhost:8007
       - GATEWAY_SECRET=payment_gateway_secret_key
+      - USER_SERVICE_URL=http://user-service:8002
       - TESTING=false
       - LOG_LEVEL=INFO
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8007 --reload"
@@ -220,6 +222,33 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+  notification-service:
+    build:
+      context: .
+      dockerfile: apps/notification-service/Dockerfile
+    container_name: showbook-notification-service
+    ports:
+      - "8008:8008"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://showbook:showbook@postgres:5432/showbook_notification
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
+      - USER_SERVICE_URL=http://user-service:8002
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_SENDER=noreply@showbook.com
+      - TESTING=false
+      - LOG_LEVEL=INFO
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8008 --reload"
+    volumes:
+      - ./apps/notification-service/app:/app/apps/notification-service/app
+      - ./apps/notification-service/migrations:/app/apps/notification-service/migrations
+      - ./packages/python/showbook_common:/app/packages/python/showbook_common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
 
 volumes:
   postgres_data:

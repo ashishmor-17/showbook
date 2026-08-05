@@ -1,17 +1,18 @@
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from showbook_common.database import db_manager
+
 from showbook_common.logger import setup_logging
 from showbook_common.middleware import CorrelationIDMiddleware
 from showbook_common.errors import register_exception_handlers
 
 from app.core.config import settings
-from app.core.redis import redis_manager
-from app.api.v1 import router as api_router
-from app.api.internal import router as internal_router
+from app.api.deps import db_manager
+from app.core.consumer import consumer
+from app.core.http import http_client
+from app.api.v1.router import router as api_router
 
-setup_logging(service_name="user-service", level=settings.LOG_LEVEL)
+setup_logging(service_name="notification-service", level=settings.LOG_LEVEL)
 logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
@@ -20,15 +21,13 @@ async def lifespan(app: FastAPI):
     db_manager.init(database_url=db_url, testing=settings.TESTING)
     logger.info("database_ready")
     
-    redis_manager.init()
-    logger.info("redis_connected")
+    http_client.start()
+    await consumer.start()
     
     yield
     
-    logger.info("redis_closing")
-    redis_manager.close()
-    
-    logger.info("database_closing")
+    await consumer.stop()
+    await http_client.close()
     await db_manager.close()
 
 app = FastAPI(
@@ -37,17 +36,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable correlation tracking for downstream traces
 app.add_middleware(CorrelationIDMiddleware)
-
 register_exception_handlers(app)
-
 app.include_router(api_router, prefix=settings.API_V1_STR)
-app.include_router(internal_router, prefix="/api/internal")
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "ok",
-        "service": "user-service"
+        "service": "notification-service"
     }

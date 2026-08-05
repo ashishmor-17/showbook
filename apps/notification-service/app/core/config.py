@@ -2,17 +2,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Payment Service"
+    PROJECT_NAME: str = "Notification Service"
     API_V1_STR: str = "/api/v1"
     
-    # Connects to showbook_booking database (shared with booking-service)
-    DATABASE_URL: SecretStr = SecretStr("postgresql+asyncpg://showbook:showbook@localhost:5432/showbook_booking")
-    
+    DATABASE_URL: SecretStr = SecretStr("postgresql+asyncpg://showbook:showbook@localhost:5432/showbook_notification")
     RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
     
-    GATEWAY_SECRET: str = "payment_gateway_secret_key"
-    PAYMENT_SERVICE_URL: str = "http://localhost:8007"
-    USER_SERVICE_URL: str = "http://user-service:8002"
+    USER_SERVICE_URL: str = "http://localhost:8002"
+    
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
+    SMTP_SENDER: str = "noreply@showbook.com"
     
     TESTING: bool = False
     LOG_LEVEL: str = "INFO"

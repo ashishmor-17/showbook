@@ -1,5 +1,6 @@
 import json
 import uuid
+import httpx
 from datetime import datetime, UTC
 from typing import Any, Dict, Optional
 import aio_pika
@@ -89,12 +90,35 @@ class PaymentService:
             txn.failure_reason = callback_data.get("failure_reason")
             txn.completed_at = datetime.now(UTC)
             txn.raw_response = callback_data
+
+        user_email = ""
+        user_name = "Customer"
+        user_phone = ""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{settings.USER_SERVICE_URL}/api/internal/users/{txn.user_id}",
+                    headers={"X-Internal-Service": "true"},
+                    timeout=5.0
+                )
+                if resp.status_code == 200:
+                    profile = resp.json()
+                    user_email = profile.get("email") or ""
+                    user_name = profile.get("name") or "Customer"
+                    user_phone = profile.get("phone") or ""
+                else:
+                    logger.error("failed_fetching_user_profile_for_payment_event", status=resp.status_code)
+        except Exception as e:
+            logger.error("error_fetching_user_profile_for_payment_event", error=str(e))
             
         event_type = f"payment.{txn.status.lower()}"
         event_payload = {
             "payment_txn_id": str(txn.id),
             "booking_ref": callback_data["booking_ref"],
             "user_id": str(txn.user_id),
+            "user_email": user_email,
+            "user_name": user_name,
+            "user_phone": user_phone,
             "gateway": txn.gateway,
             "amount": float(txn.amount),
         }
