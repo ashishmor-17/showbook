@@ -19,6 +19,13 @@ type BookingHandler struct {
 	log *zap.Logger
 }
 
+type seatItem struct {
+	SeatCode       string  `json:"seat_code"`
+	SeatType       string  `json:"seat_type"`
+	Price          float64 `json:"price"`
+	ConvenienceFee float64 `json:"convenience_fee"`
+}
+
 func NewBookingHandler(svc *service.BookingService, log *zap.Logger) *BookingHandler {
 	return &BookingHandler{svc: svc, log: log}
 }
@@ -46,7 +53,7 @@ func (h *BookingHandler) Initiate(c *gin.Context) {
 		return
 	}
 
-	booking, err := h.svc.InitiateBooking(c.Request.Context(), correlationID, userID, req.ShowtimeID, req.SeatCodes, req.IdempotencyKey)
+	booking, seats, err := h.svc.InitiateBooking(c.Request.Context(), correlationID, userID, req.ShowtimeID, req.SeatCodes, req.IdempotencyKey)
 	if err != nil {
 		h.log.Info("Booking initiation failed",
 			zap.String("correlation_id", correlationID),
@@ -72,15 +79,25 @@ func (h *BookingHandler) Initiate(c *gin.Context) {
 		return
 	}
 
+	var selectedSeats []seatItem
+	for _, s := range seats {
+		selectedSeats = append(selectedSeats, seatItem{
+			SeatCode:       s.SeatCode,
+			SeatType:       s.SeatTypeName,
+			Price:          float64(s.UnitPricePaise) / 100.0,
+			ConvenienceFee: float64(s.ConvenienceFeePaise) / 100.0,
+		})
+	}
+
 	response.Success(c, gin.H{
-		"booking_id":   booking.ID.String(),
-		"booking_ref":  booking.BookingRef,
-		"status":       booking.Status,
-		"seat_count":   len(req.SeatCodes),
-		"total_amount": float64(booking.TotalAmountPaise) / 100.0,
-		"final_amount": float64(booking.FinalAmountPaise) / 100.0,
-		"currency":     booking.Currency,
-		"expires_at":   booking.ExpiresAt.Format(time.RFC3339),
+		"booking_id":      booking.ID.String(),
+		"booking_ref":     booking.BookingRef,
+		"status":          booking.Status,
+		"selected_seats":  selectedSeats,
+		"subtotal":        float64(booking.TotalAmountPaise) / 100.0,
+		"convenience_fee": float64(booking.ConvenienceFeePaise) / 100.0,
+		"total":           float64(booking.FinalAmountPaise) / 100.0,
+		"expires_at":      booking.ExpiresAt.Format(time.RFC3339),
 	})
 }
 
@@ -182,10 +199,9 @@ func (h *BookingHandler) List(c *gin.Context) {
 }
 
 func (h *BookingHandler) Cancel(c *gin.Context) {
-	bookingIDStr := c.Param("booking_id")
-	bookingID, err := uuid.Parse(bookingIDStr)
-	if err != nil {
-		c.Error(ginErrors.BadRequest("INVALID_BOOKING_ID", "Invalid booking ID format"))
+	bookingRef := c.Param("booking_ref")
+	if bookingRef == "" {
+		c.Error(ginErrors.BadRequest("INVALID_BOOKING_REF", "Booking reference is required"))
 		return
 	}
 
@@ -199,7 +215,7 @@ func (h *BookingHandler) Cancel(c *gin.Context) {
 	}
 
 	// Fetch booking to check authorization
-	booking, _, err := h.svc.GetBookingByID(c.Request.Context(), bookingID)
+	booking, _, err := h.svc.GetBookingByRef(c.Request.Context(), bookingRef)
 	if err != nil {
 		c.Error(ginErrors.NotFound("BOOKING_NOT_FOUND", "Booking not found"))
 		return
@@ -211,9 +227,9 @@ func (h *BookingHandler) Cancel(c *gin.Context) {
 	}
 
 	// Perform cancellation
-	err = h.svc.CancelBooking(c.Request.Context(), bookingID, "USER_REQUESTED", true)
+	err = h.svc.CancelBooking(c.Request.Context(), booking.ID, "USER_REQUESTED", true)
 	if err != nil {
-		h.log.Error("Booking cancellation failed", zap.String("booking_id", bookingIDStr), zap.Error(err))
+		h.log.Error("Booking cancellation failed", zap.String("booking_ref", bookingRef), zap.Error(err))
 		if err.Error() == "cannot cancel booking less than 2 hours before showtime" {
 			c.Error(ginErrors.Conflict("CANCEL_FORBIDDEN", err.Error()))
 			return

@@ -137,6 +137,17 @@ func (w *OutboxWorker) executeInventoryRelease(ctx context.Context, payload any)
 		return fmt.Errorf("invalid payload format for inventory release")
 	}
 
+	if seatCodes, exists := payloadMap["seat_codes"]; exists {
+		if codes, ok := seatCodes.([]any); ok && len(codes) == 0 {
+			w.log.Info("Skipping inventory release: empty seat_codes array")
+			return nil
+		}
+		if codes, ok := seatCodes.([]string); ok && len(codes) == 0 {
+			w.log.Info("Skipping inventory release: empty seat_codes string array")
+			return nil
+		}
+	}
+
 	bodyBytes, err := json.Marshal(payloadMap)
 	if err != nil {
 		return err
@@ -159,8 +170,8 @@ func (w *OutboxWorker) executeInventoryRelease(ctx context.Context, payload any)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("received non-200 code from inventory release: %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("received non-200 code from inventory release: %d, response: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

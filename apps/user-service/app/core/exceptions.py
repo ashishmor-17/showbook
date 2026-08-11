@@ -55,3 +55,11 @@ class UserNotFoundException(AppException):
             message=message,
             status_code=404
         )
+
+class EmailNotVerifiedException(AppException):
+    def __init__(self, message: str = "Email not verified. Please verify your OTP first."):
+        super().__init__(
+            code="EMAIL_NOT_VERIFIED",
+            message=message,
+            status_code=403
+        )

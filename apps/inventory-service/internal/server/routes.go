@@ -15,6 +15,8 @@ func (s *Server) setupRoutes(
 	inventoryHandler *handlers.InventoryHandler,
 ) {
 	r.GET("/health", s.handleHealth(pgPool, redisClient))
+	r.GET("/live", s.handleLive())
+	r.GET("/ready", s.handleReady(pgPool, redisClient))
 
 	api := r.Group("/api/v1")
 	{
@@ -22,5 +24,6 @@ func (s *Server) setupRoutes(
 		api.POST("/inventory/release", inventoryHandler.Release)
 		api.POST("/inventory/confirm", inventoryHandler.Confirm)
 		api.GET("/inventory/showtime/:showtime_id/summary", inventoryHandler.Summary)
+		api.GET("/inventory/showtime/:showtime_id", inventoryHandler.GetStatuses)
 	}
 }

@@ -14,12 +14,14 @@ func (s *Server) setupRoutes(
 	bookingHandler *handlers.BookingHandler,
 ) {
 	r.GET("/health", s.handleHealth(pgPool))
+	r.GET("/live", s.handleLive())
+	r.GET("/ready", s.handleReady(pgPool))
 
 	api := r.Group("/api/v1")
 	{
 		api.POST("/bookings/initiate", bookingHandler.Initiate)
 		api.GET("/bookings/:booking_ref", bookingHandler.Get)
 		api.GET("/bookings", bookingHandler.List)
-		api.POST("/bookings/:booking_id/cancel", bookingHandler.Cancel)
+		api.POST("/bookings/:booking_ref/cancel", bookingHandler.Cancel)
 	}
 }

@@ -1,6 +1,6 @@
 import structlog
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from showbook_common.database import db_manager
 from showbook_common.logger import setup_logging
@@ -48,5 +48,23 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 async def health_check():
     return {
         "status": "ok",
+        "service": "venue-service"
+    }
+
+@app.get("/live")
+async def liveness_check():
+    return {
+        "status": "up",
+        "service": "venue-service"
+    }
+
+@app.get("/ready")
+async def readiness_check():
+    try:
+        await db_manager.check_db_connection()
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    return {
+        "status": "up",
         "service": "venue-service"
     }

@@ -12,13 +12,7 @@ from showbook_common.database import transaction_scope
 from app.core.config import settings
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.redis import redis_manager
-from app.core.exceptions import (
-    UserAlreadyExistsException,
-    InvalidCredentialsException,
-    TokenReusedException,
-    InvalidTokenException,
-    InvalidOTPException
-)
+from app.core.exceptions import *
 from app.models.user import User
 from app.models.profile import UserProfile
 from app.models.token import RefreshToken
@@ -28,7 +22,7 @@ from app.schemas.auth import TokenResponse, MessageResponse
 
 class AuthService:
     @classmethod
-    async def register(cls, db: AsyncSession, email: str, password_raw: str) -> MessageResponse:
+    async def register(cls, db: AsyncSession, email: str, password_raw: str, name: str | None = None) -> MessageResponse:
         async with transaction_scope(db):
             existing = await UserRepository.get_by_email(db, email)
             if existing:
@@ -36,10 +30,11 @@ class AuthService:
             
             hashed = hash_password(password_raw)
             user = User(email=email, hashed_password=hashed)
-            profile = UserProfile(user=user)
+            profile = UserProfile(user=user, name=name)
             user.profile = profile
             await UserRepository.create(db, user)
             
+        await cls.send_otp(email)
         return MessageResponse(message="User registered successfully")
 
     @classmethod
@@ -47,6 +42,9 @@ class AuthService:
         user = await UserRepository.get_by_email(db, email)
         if not user or not verify_password(password_raw, user.hashed_password):
             raise InvalidCredentialsException()
+        
+        if not user.is_verified:
+            raise EmailNotVerifiedException()
         
         return await cls._generate_tokens(db, user.id)
 

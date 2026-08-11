@@ -47,6 +47,7 @@ class MovieRepository:
         genre: Optional[str] = None,
         release_date: Optional[str] = None,
         movie_slugs: Optional[List[str]] = None,
+        movie_ids: Optional[List[uuid.UUID]] = None,
         cursor: Optional[str] = None,
         limit: int = 20
     ) -> List[Movie]:
@@ -61,6 +62,8 @@ class MovieRepository:
             query = query.where(Movie.release_date >= release_date)
         if movie_slugs is not None:
             query = query.where(Movie.slug.in_(movie_slugs))
+        if movie_ids is not None:
+            query = query.where(Movie.id.in_(movie_ids))
         if cursor:
             try:
                 cursor_uuid = uuid.UUID(cursor)
@@ -80,7 +83,12 @@ class MovieRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def search_movies(db: AsyncSession, query_str: str) -> List[Movie]:
+    async def search_movies(
+        db: AsyncSession,
+        query_str: str,
+        allowed_ids: Optional[set] = None,
+        limit: int = 10
+    ) -> List[Movie]:
         query = select(Movie).where(
             and_(
                 Movie.is_active == True,
@@ -89,7 +97,10 @@ class MovieRepository:
                     Movie.description.ilike(f"%{query_str}%")
                 )
             )
-        ).limit(10)
+        )
+        if allowed_ids is not None:
+            query = query.where(Movie.id.in_(allowed_ids))
+        query = query.limit(limit)
         result = await db.execute(query)
         return list(result.scalars().all())
 

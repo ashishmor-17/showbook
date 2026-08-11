@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     REDIS_PORT: int = "6379"
     REDIS_PASSWORD: Optional[str] = None
 
+    # Service integrations
+    VENUE_SERVICE_URL: str = "http://localhost:8001"
+
     @field_validator("DATABASE_URL", mode="after")
     @classmethod
     def assemble_db_connection(cls, v: SecretStr) -> SecretStr:

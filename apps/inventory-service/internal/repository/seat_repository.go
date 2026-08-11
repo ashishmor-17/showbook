@@ -186,3 +186,32 @@ func (r *SeatRepository) ReleaseExpiredLocksBatch(ctx context.Context, ids []uui
 	_, err := r.db.Exec(ctx, query, ids)
 	return err
 }
+
+type SeatStatusItem struct {
+	SeatCode string `json:"seat_code"`
+	Status   string `json:"status"`
+}
+
+// GetSeatStatuses retrieves all seats and their statuses for a showtime
+func (r *SeatRepository) GetSeatStatuses(ctx context.Context, showtimeID string) ([]SeatStatusItem, error) {
+	query := `
+		SELECT seat_code, status 
+		FROM seat_inventory 
+		WHERE showtime_id = $1;
+	`
+	rows, err := r.db.Query(ctx, query, showtimeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var seats []SeatStatusItem
+	for rows.Next() {
+		var item SeatStatusItem
+		if err := rows.Scan(&item.SeatCode, &item.Status); err != nil {
+			return nil, err
+		}
+		seats = append(seats, item)
+	}
+	return seats, nil
+}

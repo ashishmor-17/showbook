@@ -153,7 +153,7 @@ func (s *BookingService) InitiateBooking(
 	showtimeID string,
 	seatCodes []string,
 	idempotencyKey *string,
-) (*repository.Booking, error) {
+) (*repository.Booking, []repository.BookingSeat, error) {
 	logger := s.log.With(
 		zap.String("correlation_id", correlationID),
 		zap.String("user_id", userID),
@@ -161,27 +161,27 @@ func (s *BookingService) InitiateBooking(
 	)
 
 	if len(seatCodes) == 0 {
-		return nil, errors.New("seat list cannot be empty")
+		return nil, nil, errors.New("seat list cannot be empty")
 	}
 	if len(seatCodes) > 10 {
-		return nil, errors.New("cannot lock more than 10 seats per booking")
+		return nil, nil, errors.New("cannot lock more than 10 seats per booking")
 	}
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid user id uuid: %w", err)
+		return nil, nil, fmt.Errorf("invalid user id uuid: %w", err)
 	}
 	showtimeUUID, err := uuid.Parse(showtimeID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid showtime id uuid: %w", err)
+		return nil, nil, fmt.Errorf("invalid showtime id uuid: %w", err)
 	}
 	if idempotencyKey != nil && len(*idempotencyKey) > 128 {
-		return nil, errors.New("idempotency key is too long (max 128 chars)")
+		return nil, nil, errors.New("idempotency key is too long (max 128 chars)")
 	}
 
 	seen := make(map[string]bool)
 	for _, code := range seatCodes {
 		if seen[code] {
-			return nil, fmt.Errorf("duplicate seat code '%s' in request", code)
+			return nil, nil, fmt.Errorf("duplicate seat code '%s' in request", code)
 		}
 		seen[code] = true
 	}
@@ -192,17 +192,21 @@ func (s *BookingService) InitiateBooking(
 	if idempotencyKey != nil && *idempotencyKey != "" {
 		existing, err := s.repo.CheckIdempotency(ctx, *idempotencyKey)
 		if err != nil {
-			return nil, fmt.Errorf("idempotency check failed: %w", err)
+			return nil, nil, fmt.Errorf("idempotency check failed: %w", err)
 		}
 		if existing != nil {
 			if existing.UserID != userUUID || existing.RequestHash == nil || *existing.RequestHash != requestHash {
-				return nil, ErrIdempotencyConflict
+				return nil, nil, ErrIdempotencyConflict
 			}
 			if existing.Status == utils.StatusExpired || existing.Status == utils.StatusCancelled {
-				return nil, ErrIdempotencyConflict
+				return nil, nil, ErrIdempotencyConflict
 			}
 			logger.Info("Idempotent request replayed successfully", zap.String("booking_ref", existing.BookingRef))
-			return existing, nil
+			_, seats, getErr := s.repo.GetBookingByRef(ctx, existing.BookingRef)
+			if getErr != nil {
+				return existing, nil, nil
+			}
+			return existing, seats, nil
 		}
 	}
 
@@ -218,7 +222,7 @@ func (s *BookingService) InitiateBooking(
 		req, reqErr := http.NewRequestWithContext(venueCtx, "GET", venueURL, nil)
 		if reqErr != nil {
 			cancelVenue()
-			return nil, fmt.Errorf("failed creating HTTP request: %w", reqErr)
+			return nil, nil, fmt.Errorf("failed creating HTTP request: %w", reqErr)
 		}
 
 		resp, err = s.httpClient.Do(venueCtx, req)
@@ -234,7 +238,7 @@ func (s *BookingService) InitiateBooking(
 		jitter := time.Duration(rand.IntN(50)) * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(backoff + jitter):
 		}
 		backoff *= 2
@@ -243,7 +247,7 @@ func (s *BookingService) InitiateBooking(
 		if cancelVenue != nil {
 			cancelVenue()
 		}
-		return nil, ErrVenueUnavailable
+		return nil, nil, ErrVenueUnavailable
 	}
 	defer func() {
 		drainAndClose(resp.Body)
@@ -252,18 +256,18 @@ func (s *BookingService) InitiateBooking(
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, ErrShowtimeNotFound
+			return nil, nil, ErrShowtimeNotFound
 		}
-		return nil, ErrVenueUnavailable
+		return nil, nil, ErrVenueUnavailable
 	}
 
 	var seatMap VenueSeatMapResponse
 	if err := json.NewDecoder(resp.Body).Decode(&seatMap); err != nil {
-		return nil, fmt.Errorf("failed to parse layout response: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse layout response: %w", err)
 	}
 
 	if seatMap.Status != utils.ShowtimeStatusOpen {
-		return nil, ErrShowClosed
+		return nil, nil, ErrShowClosed
 	}
 
 	seatMapLookup := make(map[string]struct {
@@ -295,10 +299,10 @@ func (s *BookingService) InitiateBooking(
 	for _, code := range seatCodes {
 		seatInfo, exists := seatMapLookup[code]
 		if !exists {
-			return nil, fmt.Errorf("seat %s does not exist in screen layout", code)
+			return nil, nil, fmt.Errorf("seat %s does not exist in screen layout", code)
 		}
 		if seatInfo.status != "AVAILABLE" {
-			return nil, fmt.Errorf("seat %s is no longer available (status: %s)", code, seatInfo.status)
+			return nil, nil, fmt.Errorf("seat %s is no longer available (status: %s)", code, seatInfo.status)
 		}
 
 		totalAmountPaise += seatInfo.pricePaise
@@ -331,13 +335,13 @@ func (s *BookingService) InitiateBooking(
 		bodyBytes, marshalErr := json.Marshal(lockPayload)
 		if marshalErr != nil {
 			cancelInventory()
-			return nil, fmt.Errorf("failed to marshal lock request: %w", marshalErr)
+			return nil, nil, fmt.Errorf("failed to marshal lock request: %w", marshalErr)
 		}
 
 		lockReq, lockReqErr := http.NewRequestWithContext(inventoryCtx, "POST", inventoryURL, bytes.NewBuffer(bodyBytes))
 		if lockReqErr != nil {
 			cancelInventory()
-			return nil, fmt.Errorf("failed to build lock request: %w", lockReqErr)
+			return nil, nil, fmt.Errorf("failed to build lock request: %w", lockReqErr)
 		}
 		lockReq.Header.Set("Content-Type", "application/json")
 
@@ -354,7 +358,7 @@ func (s *BookingService) InitiateBooking(
 		jitter := time.Duration(rand.IntN(50)) * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(lockBackoff + jitter):
 		}
 		lockBackoff *= 2
@@ -363,7 +367,7 @@ func (s *BookingService) InitiateBooking(
 		if cancelInventory != nil {
 			cancelInventory()
 		}
-		return nil, ErrInventoryTimeout
+		return nil, nil, ErrInventoryTimeout
 	}
 	defer func() {
 		drainAndClose(lockResp.Body)
@@ -371,7 +375,7 @@ func (s *BookingService) InitiateBooking(
 	}()
 
 	if lockResp.StatusCode != http.StatusOK {
-		return nil, ErrSeatAlreadyLocked
+		return nil, nil, ErrSeatAlreadyLocked
 	}
 
 	var lockRespBody struct {
@@ -407,7 +411,7 @@ func (s *BookingService) InitiateBooking(
 		userName = profile.Name
 		userPhone = profile.Phone
 	} else {
-		s.log.Error("Failed to fetch user profile for booking initiation", zap.String("user_id", userID), zap.Error(profileErr))
+		s.log.Warn("Failed to fetch user profile for booking initiation", zap.String("user_id", userID), zap.Error(profileErr))
 		userName = "Customer"
 	}
 
@@ -447,7 +451,7 @@ func (s *BookingService) InitiateBooking(
 			finalBookingRef, err = utils.GenerateBookingRef(dateStr)
 			if err != nil {
 				s.QueueInventoryReleaseEvent(ctx, showtimeID, bookingID.String(), lockToken, seatCodes)
-				return nil, fmt.Errorf("cryptographic random failure: %w", err)
+				return nil, nil, fmt.Errorf("cryptographic random failure: %w", err)
 			}
 
 			b.BookingRef = finalBookingRef
@@ -467,7 +471,7 @@ func (s *BookingService) InitiateBooking(
 						if checkErr == nil && existing != nil {
 							logger.Info("Concurrent request matched database idempotency key", zap.String("booking_ref", existing.BookingRef))
 							s.QueueInventoryReleaseEvent(ctx, showtimeID, bookingID.String(), lockToken, seatCodes)
-							return existing, nil
+							return existing, nil, nil
 						}
 					}
 					break
@@ -487,11 +491,11 @@ func (s *BookingService) InitiateBooking(
 		logger.Error("Failed saving booking. Queuing async release event", zap.Error(err))
 		s.QueueInventoryReleaseEvent(ctx, showtimeID, bookingID.String(), lockToken, seatCodes)
 		s.publishBookingFailedEvent(ctx, bookingID, finalBookingRef, userID, showtimeID, lockToken, seatCodes)
-		return nil, fmt.Errorf("booking transaction failed: %w", err)
+		return nil, nil, fmt.Errorf("booking transaction failed: %w", err)
 	}
 
 	logger.Info("Booking initiated successfully", zap.String("booking_ref", finalBookingRef), zap.String("lock_token", lockToken))
-	return b, nil
+	return b, repoSeats, nil
 }
 
 func (s *BookingService) QueueInventoryReleaseEvent(ctx context.Context, showtimeID, bookingID, lockToken string, seatCodes []string) {
@@ -690,7 +694,7 @@ func (s *BookingService) ConfirmBooking(
 		userName = profile.Name
 		userPhone = profile.Phone
 	} else {
-		s.log.Error("Failed to fetch user profile for booking confirmation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
+		s.log.Warn("Failed to fetch user profile for booking confirmation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
 		userName = "Customer"
 	}
 
@@ -805,7 +809,7 @@ func (s *BookingService) CancelBooking(
 		userName = profile.Name
 		userPhone = profile.Phone
 	} else {
-		s.log.Error("Failed to fetch user profile for booking cancellation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
+		s.log.Warn("Failed to fetch user profile for booking cancellation", zap.String("user_id", booking.UserID.String()), zap.Error(profileErr))
 		userName = "Customer"
 	}
 

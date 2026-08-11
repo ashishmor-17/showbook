@@ -4,12 +4,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 class PaymentInitiateRequest(BaseModel):
-    booking_id: uuid.UUID
     booking_ref: str
-    user_id: uuid.UUID
     gateway: str  # 'MOCK_RAZORPAY', 'MOCK_STRIPE', 'MOCK_PAYU'
-    amount: float = Field(..., description="Amount in Rupees (decimal format e.g. 500.00)")
-    currency: str = "INR"
     idempotency_key: Optional[str] = None
 
 class PaymentInitiateResponse(BaseModel):

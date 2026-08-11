@@ -2,7 +2,8 @@ import uuid
 import asyncio
 import random
 import httpx
-from fastapi import APIRouter, Depends, BackgroundTasks, status
+from typing import Optional
+from fastapi import APIRouter, Depends, BackgroundTasks, Header, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -56,7 +57,7 @@ async def simulate_gateway_payment(
     signature = calculate_hmac(callback_data, settings.GATEWAY_SECRET)
     callback_data["signature"] = signature
     
-    url = f"{settings.PAYMENT_SERVICE_URL}{settings.API_V1_STR}/payments/callback"
+    url = f"{settings.PAYMENT_SERVICE_URL}{settings.API_V1_STR}/payments/webhook/{gateway.lower()}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             logger.info("triggering_mock_gateway_callback", url=url, txn_id=str(txn_id))
@@ -72,12 +73,18 @@ async def simulate_gateway_payment(
 )
 async def initiate_payment(
     payload: PaymentInitiateRequest,
+    x_user_id: str = Header(..., alias="X-User-Id"),
     db: AsyncSession = Depends(get_db)
 ):
+    try:
+        user_uuid = uuid.UUID(x_user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-User-Id header format")
+
     if payload.gateway not in ("MOCK_RAZORPAY", "MOCK_STRIPE", "MOCK_PAYU"):
         raise InvalidGatewayException()
         
-    txn = await PaymentService.initiate(db, payload)
+    txn = await PaymentService.initiate(db, payload, user_uuid)
     redirect_url = f"{settings.PAYMENT_SERVICE_URL}/mock-gateway/pay?txn_id={txn.id}"
     
     return PaymentInitiateResponse(
@@ -86,11 +93,19 @@ async def initiate_payment(
         status=txn.status
     )
 
+@router.post("/webhook/{gateway}")
 @router.post("/callback")
 async def payment_callback(
     payload: CallbackPayload,
+    gateway: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
+    if gateway:
+        expected_gw = gateway.upper()
+        payload_gw = payload.gateway.upper()
+        if expected_gw != payload_gw and f"MOCK_{expected_gw}" != payload_gw:
+            raise InvalidGatewayException(details={"message": f"Gateway mismatch: {gateway} vs {payload.gateway}"})
+
     signature_ok = verify_gateway_signature(
         payload.model_dump(mode="json", exclude_none=True), 
         payload.signature, 
@@ -100,22 +115,14 @@ async def payment_callback(
         logger.warn("callback_signature_mismatch", txn_id=str(payload.payment_txn_id))
         raise SignatureValidationFailedException()
 
-    txn = await PaymentRepository.get_by_id(db, payload.payment_txn_id)
-    if not txn:
-        raise PaymentTransactionNotFoundException()
-
-    if txn.status in ("SUCCESS", "FAILED"):
-        return {"status": "ignored", "message": f"Transaction already in terminal state {txn.status}"}
-
-    await PaymentService.process_callback(db, txn, payload.model_dump(mode="json", exclude_none=True))
-    return {"status": txn.status, "message": "Callback verified and event published"}
+    res = await PaymentService.process_callback(
+        db, payload.payment_txn_id, payload.model_dump(mode="json", exclude_none=True)
+    )
+    return res
 
 @router.get("/{payment_txn_id}", response_model=PaymentTxnResponse)
 async def get_payment_status(
     payment_txn_id: uuid.UUID,
     db: AsyncSession = Depends(get_db)
 ):
-    txn = await PaymentRepository.get_by_id(db, payment_txn_id)
-    if not txn:
-        raise PaymentTransactionNotFoundException()
-    return txn
+    return await PaymentService.get_payment_txn(db, payment_txn_id)

@@ -120,3 +120,15 @@ func (h *InventoryHandler) Summary(c *gin.Context) {
 
 	response.Success(c, summary)
 }
+
+func (h *InventoryHandler) GetStatuses(c *gin.Context) {
+	showtimeID := c.Param("showtime_id")
+
+	statuses, err := h.svc.GetSeatStatuses(c.Request.Context(), showtimeID)
+	if err != nil {
+		c.Error(errors.New(http.StatusInternalServerError, "STATUSES_FAILED", err.Error()))
+		return
+	}
+
+	response.Success(c, gin.H{"seats": statuses})
+}

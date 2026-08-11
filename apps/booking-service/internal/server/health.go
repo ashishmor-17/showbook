@@ -11,6 +11,19 @@ import (
 )
 
 func (s *Server) handleHealth(pgPool *pgxpool.Pool) gin.HandlerFunc {
+	return s.handleReady(pgPool)
+}
+
+func (s *Server) handleLive() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "UP",
+			"service": "booking-service",
+		})
+	}
+}
+
+func (s *Server) handleReady(pgPool *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
@@ -19,16 +32,17 @@ func (s *Server) handleHealth(pgPool *pgxpool.Pool) gin.HandlerFunc {
 
 		if dbErr != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status":   "UNHEALTHY",
+				"status":   "DOWN",
 				"service":  "booking-service",
-				"postgres": dbErr == nil,
+				"postgres": "DOWN",
 			})
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"status":  "OK",
-			"service": "booking-service",
+			"status":   "UP",
+			"service":  "booking-service",
+			"postgres": "UP",
 		})
 	}
 }
