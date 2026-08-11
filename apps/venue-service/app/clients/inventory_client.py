@@ -35,9 +35,11 @@ class InventoryClient:
             if response.status_code == 200:
                 data = response.json()
                 if isinstance(data, dict):
-                    if "seats" in data:
-                        return {item["seat_code"]: item["status"] for item in data["seats"]}
-                    return data
+                    inner_data = data.get("data", data)
+                    if isinstance(inner_data, dict) and "seats" in inner_data:
+                        return {item["seat_code"]: item["status"] for item in inner_data["seats"]}
+                    if isinstance(inner_data, dict):
+                        return inner_data
         except Exception as e:
             logger.warning(
                 "Failed to fetch seat statuses from inventory-service, falling back to AVAILABLE",

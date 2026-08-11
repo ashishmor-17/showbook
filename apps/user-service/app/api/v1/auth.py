@@ -27,7 +27,7 @@ def rate_limit_login(request: Request):
 
 @router.post("/register", response_model=MessageResponse)
 async def register(payload: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
-    return await AuthService.register(db, payload.email, payload.password)
+    return await AuthService.register(db, payload.email, payload.password, payload.name)
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit_login)])
 async def login(payload: UserLoginRequest, db: AsyncSession = Depends(get_db)):

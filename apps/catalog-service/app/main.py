@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 import structlog
 
@@ -39,5 +39,24 @@ app.include_router(api_v1_router, prefix="/api/v1")
 async def health_check():
     return {
         "status": "ok",
+        "service": "catalog-service"
+    }
+
+@app.get("/live")
+async def liveness_check():
+    return {
+        "status": "up",
+        "service": "catalog-service"
+    }
+
+@app.get("/ready")
+async def readiness_check():
+    try:
+        await db_manager.check_db_connection()
+        await redis_client.ping()
+    except Exception:
+        raise HTTPException(status_code=503, detail="Service dependencies unhealthy")
+    return {
+        "status": "up",
         "service": "catalog-service"
     }

@@ -111,4 +111,19 @@ class ShowtimeService:
             "status": showtime.status,
             "venue_name": showtime.venue.name,
             "movie_id": showtime.catalog_ref_id
-    }
+        }
+
+    @classmethod
+    async def get_catalog_refs(
+        cls,
+        db: AsyncSession,
+        city_id: uuid.UUID,
+        show_date: date,
+        catalog_type: str
+    ) -> list[uuid.UUID]:
+        return await ShowtimeRepository.get_catalog_refs_by_city_and_date(
+            db=db,
+            city_id=city_id,
+            show_date=show_date,
+            catalog_type=catalog_type
+        )

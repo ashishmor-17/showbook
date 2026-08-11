@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import PaymentTransaction
@@ -26,3 +26,21 @@ class PaymentRepository:
     async def create_refund(db: AsyncSession, refund: Refund) -> Refund:
         db.add(refund)
         return refund
+
+    @staticmethod
+    async def get_booking_by_ref(db: AsyncSession, booking_ref: str):
+        query = text(
+            "SELECT id, user_id, status, final_amount_paise, currency "
+            "FROM bookings WHERE booking_ref = :ref"
+        )
+        result = await db.execute(query, {"ref": booking_ref})
+        return result.fetchone()
+
+    @staticmethod
+    async def get_booking_ref_by_id(db: AsyncSession, booking_id: uuid.UUID) -> str | None:
+        query = text(
+            "SELECT booking_ref FROM bookings WHERE id = :booking_id"
+        )
+        result = await db.execute(query, {"booking_id": booking_id})
+        row = result.fetchone()
+        return row[0] if row else None

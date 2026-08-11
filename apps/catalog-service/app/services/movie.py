@@ -10,6 +10,9 @@ from app.repositories.movie import MovieRepository
 from app.schemas.movies import MovieResponseSchema
 from app.models.movies import Movie
 from app.core.exceptions import MovieNotFoundException, ServiceUnavailableException
+from app.core.config import settings
+
+from app.core.http import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,27 +20,49 @@ class MovieService:
     @staticmethod
     async def get_movies(
         db: AsyncSession,
-        http_client: httpx.AsyncClient,
         language: Optional[str] = None,
         genre: Optional[str] = None,
         release_date: Optional[str] = None,
         city: Optional[str] = None,
+        city_id: Optional[uuid.UUID] = None,
+        date: Optional[str] = None,
         cursor: Optional[str] = None,
         limit: int = 20
     ) -> tuple[List[Movie], Optional[str]]:
         
+        movie_ids = None
         movie_slugs = None
-        if city:
+        
+        resolved_city_id = city_id
+        if city and not resolved_city_id:
+            try:
+                response = await http_client.get(f"{settings.VENUE_SERVICE_URL}/api/v1/venues/cities")
+                if response.status_code == 200:
+                    cities_list = response.json().get("cities", [])
+                    for c in cities_list:
+                        if c.get("slug", "").lower() == city.lower():
+                            resolved_city_id = uuid.UUID(c.get("id"))
+                            break
+            except Exception:
+                logger.exception("Failed to resolve city slug to id")
+
+        if resolved_city_id:
+            filter_date = date or release_date
+            if not filter_date:
+                from datetime import date as dt_date
+                filter_date = dt_date.today().isoformat()
             try:
                 response = await http_client.get(
-                    f"http://localhost:8000/api/v1/venues/cities/{city}/movies"
+                    f"{settings.VENUE_SERVICE_URL}/api/v1/venues/cities/{resolved_city_id}/catalog-refs",
+                    params={"date": filter_date, "catalog_type": "MOVIE"}
                 )
                 if response.status_code == 200:
-                    movie_slugs = response.json().get("movie_slugs", [])
+                    raw_ids = response.json().get("catalog_ref_ids", [])
+                    movie_ids = [uuid.UUID(rid) for rid in raw_ids]
                 else:
                     raise ServiceUnavailableException("venue-service")
             except Exception:
-                logger.exception(f"Failed to fetch movies for city {city} from venue-service")
+                logger.exception(f"Failed to fetch catalog-refs for city_id {resolved_city_id} from venue-service")
                 raise ServiceUnavailableException("venue-service")
 
         items = await MovieRepository.get_movies(
@@ -46,6 +71,7 @@ class MovieService:
             genre=genre,
             release_date=release_date,
             movie_slugs=movie_slugs,
+            movie_ids=movie_ids,
             cursor=cursor,
             limit=limit
         )

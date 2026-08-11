@@ -52,3 +52,23 @@ class ShowtimeRepository:
             select(ShowtimeSeatPricing).where(ShowtimeSeatPricing.showtime_id == showtime_id)
         )
         return list(result.scalars().all())
+
+    @staticmethod
+    async def get_catalog_refs_by_city_and_date(
+        db: AsyncSession,
+        city_id: uuid.UUID,
+        show_date: date,
+        catalog_type: str
+    ) -> list[uuid.UUID]:
+        result = await db.execute(
+            select(Showtime.catalog_ref_id)
+            .join(Venue, Showtime.venue_id == Venue.id)
+            .where(
+                Venue.city_id == city_id,
+                Showtime.show_date == show_date,
+                Showtime.catalog_type == catalog_type,
+                Showtime.status != ShowtimeStatus.CANCELLED.value
+            )
+            .distinct()
+        )
+        return list(result.scalars().all())

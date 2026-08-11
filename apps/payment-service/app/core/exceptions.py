@@ -40,3 +40,21 @@ class TransactionAlreadyProcessedException(PaymentServiceException):
             status_code=400,
             details=details
         )
+
+class BookingNotFoundException(PaymentServiceException):
+    def __init__(self, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            code="BOOKING_NOT_FOUND",
+            message="Booking reference not found",
+            status_code=404,
+            details=details
+        )
+
+class AccessDeniedException(PaymentServiceException):
+    def __init__(self, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            code="ACCESS_DENIED",
+            message="You are not authorized to view or pay for this booking",
+            status_code=403,
+            details=details
+        )

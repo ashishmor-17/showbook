@@ -112,3 +112,7 @@ func (s *InventoryService) GetSummary(ctx context.Context, showtimeID string) (S
 
 	return summary, nil
 }
+
+func (s *InventoryService) GetSeatStatuses(ctx context.Context, showtimeID string) ([]dbRepo.SeatStatusItem, error) {
+	return s.repo.GetSeatStatuses(ctx, showtimeID)
+}
